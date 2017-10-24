@@ -30,3 +30,5 @@ UnicodeString <- 'αβ😃γ'
 
 # 🎁
 HexEscape <- [\u{1F381}]
+
+CaseInsensitive <- "Hello123γ456"

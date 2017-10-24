@@ -87,24 +87,42 @@
 
 
 (define (visit-case-literal exp)
-  (define (cc-chil c)
-    (if (char-alphabetic? c)
-        (list (char-upcase c) (char-downcase c))
-        (list c)))
-  (convert-chars! exp)
-  (let ((letters (ast-c exp)))
-    (if (memf char-alphabetic? letters)
-        (if (null? (cdr letters))
-            (let ((c (car letters)))
-              (set-ast-t! exp 'charClass)
-              (set-ast-c! exp (cc-chil c)))
-            (begin
-              (set-ast-t! exp 'sequence)
-              (set-ast-c! exp (map (lambda (a)
-                                        (ast 'charClass (cc-chil a) (cons 0 0)))
-                                      letters))))
-        (set-ast-t! exp 'literal))))
-
+  ; Returns a sorted and unique list of the character and its 1-to-1 upcase
+  ; and downcase code point mappings, e.g.:
+  ; (char-case-variants #\a) ; '(#\a #\A)
+  ; (char-case-variants #\5) ; '(#\5)
+  ; (char-case-variants #\ß) ; '(#\ß)
+  (define (char-case-variants c)
+    (foldl
+      (lambda (a cs)
+        (if (or (null? cs) (not (char=? a (car cs)))) (cons a cs) cs))
+      '()
+      (sort (list (char-upcase c) (char-downcase c)) char<?)))
+  ; A list of 'literal | 'charClass
+  (define es
+    (reverse (foldl
+      (lambda (lc es)
+        (define cs (char-case-variants (car (ast-c lc))))
+        (cond
+          [(not (null? (cdr cs)))
+           (cons (ast 'charClass cs '(0 0)) es)]
+          [(or (null? es) (eq? 'charClass (ast-t (car es))))
+           (cons (ast 'literal cs '(0 0)) es)]
+          [else
+            (set-ast-c! (car es) (cons (car cs) (ast-c (car es))))
+            es]))
+        '()
+        (ast-c exp))))
+  ; Reverse the literals, as they were constructed using cons
+  (for ([a es])
+    (when (eq? 'literal (ast-t a)) (set-ast-c! a (reverse (ast-c a)))))
+  (if (null? (cdr es))
+      (begin
+        (set-ast-t! exp (ast-t (car es)))
+        (set-ast-c! exp (ast-c (car es))))
+      (begin
+        (set-ast-t! exp 'sequence)
+        (set-ast-c! exp es))))
 
 (define (convert-char c)
   (define (cc-char c)

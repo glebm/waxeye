@@ -254,6 +254,9 @@ Matches `text` in the input.
 Matches `text` in the input while ignores case. This is equivalent to the
 expression `[tT][eE][xX][tT]` but, is much more readable.
 
+This is not a true Unicode case-folding string comparison but a sequence
+of character classes generated from the character and its downcase and
+upcase 1-to-1 code point mappings defined by Unicode.
 
 ===== Character Class =====
 `[a-z_-]`
@@ -447,7 +450,7 @@ Product
 
 However, if the 'Product' rule parses a string with just one 'Number' in it, we
 will get a tree that is slightly bigger than we need. Parsing the string `5`
-produces the following tree. 
+produces the following tree.
 
 -------------------------------------------------------------------------------
 Product
@@ -1570,7 +1573,7 @@ class Calculator
 
   def self.calc(input)
     ast = @@p.parse(input)
-  
+
     if ast.is_a?(Waxeye::ParseError)
       ast
     else
