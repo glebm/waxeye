@@ -167,11 +167,7 @@ class ParseError {
         this.chars = chars;
     }
     toString() {
-        let chars;
-        chars = this.chars.map((err) => err.toGrammarString()).join(' | ');
-        if (chars === '') {
-            chars = '\'\'';
-        }
+        const chars = this.chars.map((err) => err.toGrammarString()).join(' | ') || '\'\'';
         return `Parse error: Failed to match '${this.nt.join(',')}' at line=${this.line}, col=${this.col}, pos=${this.pos}. Expected: ${chars}`;
     }
 }
@@ -253,33 +249,28 @@ function evalNext(exp, pos, asts, err, continuations) {
 function applyNext(continuations, value) {
     return { type: 2 /* APPLY */, continuations, value };
 }
-function returnNext(result) {
-    return { type: 3 /* RETURN */, result };
-}
 function match(env, start, input) {
     // move from initial state to halting state
-    let action = move(env, start, input, evalNext(env[start].exp, 0, [], new RawError(0, [start], [], start), []));
-    while (action.type !== 3 /* RETURN */) {
-        action = move(env, start, input, action);
-    }
-    return action.result;
-}
-function move(env, start, input, conf) {
-    switch (conf.type) {
-        case 1 /* EVAL */:
-            return moveEval(env, input, conf);
-        case 2 /* APPLY */:
-            const { continuations, value } = conf;
-            if (continuations.length === 0) {
-                return moveReturn(env, start, input, value);
-            }
-            const [evaluated, ...rest] = continuations;
-            return moveApply(env, input, value, evaluated, rest);
+    let action = moveEval(env, input, evalNext(env[start].exp, 0, [], new RawError(0, [start], [], start), []));
+    while (true) {
+        switch (action.type) {
+            case 1 /* EVAL */:
+                action = moveEval(env, input, action);
+                break;
+            case 2 /* APPLY */:
+                const { continuations, value } = action;
+                if (continuations.length === 0) {
+                    return moveReturn(env, start, input, value);
+                }
+                const [evaluated, ...rest] = continuations;
+                action = moveApply(env, input, value, evaluated, rest);
+                break;
+        }
     }
 }
-// Evaluates the result of the expression given in `conf`.
-function moveEval(env, input, conf) {
-    const { exp, pos, asts, err, continuations } = conf;
+// Evaluates the result of the expression given in `action`.
+function moveEval(env, input, action) {
+    const { exp, pos, asts, err, continuations } = action;
     const eof = pos >= input.length;
     switch (exp.type) {
         case 10 /* ANY */:
@@ -294,22 +285,23 @@ function moveEval(env, input, conf) {
                     // A non single-char code-point implies !eof(pos + 1)
                     accept(pos + 2, [input[pos] + input[pos + 1], ...asts], err));
             }
-        case 2 /* ALT */:
-            const es = exp.args;
-            if (es.length > 0) {
-                return evalNext(es[0], pos, asts, err, [contAlt(es.slice(1), pos, asts), ...continuations]);
+        case 2 /* ALT */: {
+            const { exprs } = exp;
+            if (exprs.length > 0) {
+                return evalNext(exprs[0], pos, asts, err, [contAlt(exprs.slice(1), pos, asts), ...continuations]);
             }
             else {
                 return applyNext(continuations, reject(err));
             }
+        }
         case 7 /* AND */:
-            return evalNext(exp.args[0], pos, [], err, [contAnd(pos, asts, err), ...continuations]);
+            return evalNext(exp.expr, pos, [], err, [contAnd(pos, asts, err), ...continuations]);
         case 8 /* NOT */:
-            return evalNext(exp.args[0], pos, [], err, [contNot(pos, asts, err), ...continuations]);
+            return evalNext(exp.expr, pos, [], err, [contNot(pos, asts, err), ...continuations]);
         case 9 /* VOID */:
-            return evalNext(exp.args[0], pos, [], err, [contVoid(asts), ...continuations]);
+            return evalNext(exp.expr, pos, [], err, [contVoid(asts), ...continuations]);
         case 11 /* CHAR */:
-            const c = exp.args[0];
+            const c = exp.char;
             return applyNext(continuations, c.length === 1 ?
                 eof || c !== input[pos] ?
                     reject(updateError(err, pos, new ErrChar(c))) :
@@ -320,7 +312,7 @@ function moveEval(env, input, conf) {
                     reject(updateError(err, pos, new ErrChar(c))) :
                     accept(pos + 2, [input[pos] + input[pos + 1], ...asts], err));
         case 12 /* CHAR_CLASS */:
-            const cc = exp.args;
+            const cc = exp.codepoints;
             if (eof) {
                 return applyNext(continuations, reject(updateError(err, pos, new ErrCC(cc))));
             }
@@ -344,30 +336,34 @@ function moveEval(env, input, conf) {
                 }
             }
             return applyNext(continuations, reject(updateError(err, pos, new ErrCC(cc))));
-        case 3 /* SEQ */:
+        case 3 /* SEQ */: {
             // A sequence is made up of a list of expressions.
             // We traverse the list, making sure each expression succeeds.
             // The rest of the string returned by the expression is used
             // as input to the next expression.
-            const exprs = exp.args;
+            const { exprs } = exp;
             if (exprs.length === 0) {
                 return applyNext(continuations, accept(pos, asts, err));
             }
             else {
                 return evalNext(exprs[0], pos, asts, err, [contSeq(exprs.slice(1)), ...continuations]);
             }
+        }
         case 4 /* PLUS */:
-            return evalNext(exp.args[0], pos, asts, err, [contPlus(exp.args[0]), ...continuations]);
+            return evalNext(exp.expr, pos, asts, err, [contPlus(exp.expr), ...continuations]);
         case 5 /* STAR */:
-            return evalNext(exp.args[0], pos, asts, err, [contStar(exp.args[0], pos, asts), ...continuations]);
+            return evalNext(exp.expr, pos, asts, err, [contStar(exp.expr, pos, asts), ...continuations]);
         case 6 /* OPT */:
-            return evalNext(exp.args[0], pos, asts, err, [contOpt(pos, asts), ...continuations]);
+            return evalNext(exp.expr, pos, asts, err, [contOpt(pos, asts), ...continuations]);
         case 1 /* NT */:
-            const name = exp.args[0];
+            const { name } = exp;
             const nt = env[name];
-            return evalNext(nt.exp, pos, [], new RawError(err.pos, err.nonterminals, err.failedChars, name), [contNT(nt.mode, name, asts, conf.err.currentNT), ...continuations]);
+            return evalNext(nt.exp, pos, [], new RawError(err.pos, err.nonterminals, err.failedChars, name), [
+                contNT(nt.mode, name, asts, err.currentNT),
+                ...continuations,
+            ]);
         default:
-            throw new Error(`Unsupported exp.type in exp=${exp.type} conf=${JSON.stringify(conf)}`);
+            throw new Error(`Unsupported exp.type in exp=${exp.type} action=${JSON.stringify(action)}`);
     }
 }
 // Handles the result of a processed continuation.
@@ -426,6 +422,7 @@ function moveApplyOnAccept(env, input, accepted, evaluated, rest) {
                 default:
                     // Without this check, the TypeScript compiler doesn't
                     // realize that the outer case is also exhaustive.
+                    // tslint:disable-next-line:no-unused-variable
                     const checkExhaustive = mode;
                     throw new Error(`Invalid mode: ${JSON.stringify(mode)}`);
             }
@@ -459,6 +456,7 @@ function moveApplyOnReject(env, input, rejected, evaluated, continuations) {
             const err = rejected.err;
             return applyNext(continuations, reject(new RawError(err.pos, err.nonterminals, err.failedChars, evaluated.nt)));
         default:
+            // tslint:disable-next-line:no-unused-variable
             const checkExhaustive = evaluated;
             throw new Error(`Invalid continuation: ${JSON.stringify(evaluated)}`);
     }
@@ -471,33 +469,33 @@ function moveReturn(env, start, input, value) {
             if (value.pos >= input.length) {
                 switch (env[start].mode) {
                     case 1 /* NORMAL */:
-                        return returnNext(new AST(start, asts.reverse()));
+                        return new AST(start, asts.reverse());
                     case 2 /* PRUNING */:
                         switch (asts.length) {
                             case 0:
-                                return returnNext(EmptyAST());
+                                return EmptyAST();
                             case 1:
                                 const ast = asts[0];
                                 if (typeof ast === 'string') {
                                     throw new Error(`Expected an AST, got a string ${JSON.stringify(ast)}, in ${value}`);
                                 }
-                                return returnNext(ast);
+                                return ast;
                             default:
-                                return returnNext(new AST(start, asts.reverse()));
+                                return new AST(start, asts.reverse());
                         }
                     case 3 /* VOIDING */:
-                        return returnNext(EmptyAST());
+                        return EmptyAST();
                 }
             }
             else if (value.err && value.pos === value.err.pos) {
-                return returnNext((new RawError(value.pos, value.err.nonterminals, value.err.failedChars, ''))
-                    .toParseError(input));
+                return new RawError(value.pos, value.err.nonterminals, value.err.failedChars, '')
+                    .toParseError(input);
             }
             else {
-                return returnNext((new RawError(value.pos, [], [], '')).toParseError(input));
+                return new RawError(value.pos, [], [], '').toParseError(input);
             }
         case 2 /* REJECT */:
-            return returnNext(value.err.toParseError(input));
+            return value.err.toParseError(input);
     }
 }
 function getLineCol(pos, input) {
