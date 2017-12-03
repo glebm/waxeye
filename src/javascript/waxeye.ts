@@ -4,7 +4,7 @@
  */
 
 import {cons, ConsList, empty} from './cons_list';
-import {Expr, exprToRuntimeExpr, ExprType, RuntimeExpr} from './expr';
+import {Expr, ExprAnyChar, ExprChar, ExprCharClass, exprToRuntimeExpr, ExprType, RuntimeExpr} from './expr';
 
 export {Expr, ExprType} from './expr';
 
@@ -76,97 +76,109 @@ export function EmptyAST(): EmptyAST {
   return new AST('', []) as EmptyAST;
 }
 
-export interface MatchError {
-  // Expected expression in the grammar format.
-  toGrammarString(): string;
-}
+export type TerminalExpr = ExprChar|ExprCharClass|ExprAnyChar;
 
-// A failed single character match.
-export class ErrChar implements MatchError {
-  constructor(public char: string) {}
-
-  public toGrammarString() {
-    return `'${JSON.stringify(this.char).slice(1, -1)}'`;
+function exprToGrammarString(expr: TerminalExpr): string {
+  switch (expr.type) {
+    case ExprType.ANY_CHAR:
+      return '.';
+    case ExprType.CHAR:
+      return charToGrammarChar(expr.char);
+    case ExprType.CHAR_CLASS:
+      return `[${
+          expr.codepoints
+              .map((cc) => {
+                return typeof cc === 'number' ?
+                    charToGrammarChar(String.fromCodePoint(cc)) :
+                    `${charToGrammarChar(String.fromCodePoint(cc[0]))}-${
+                        charToGrammarChar(String.fromCodePoint(cc[1]))}`;
+              })
+              .join('')}]`;
   }
 }
 
-// A failed character class match.
-export class ErrCC implements MatchError {
-  // A list of Unicode codepoints / ranges of codepoints.
-  constructor(public charClasses: Array<number|[number, number]>) {}
-
-  public toGrammarString() {
-    return `[${
-        this.charClasses
-            .map((charClass) => {
-              return JSON
-                  .stringify(
-                      typeof charClass === 'number' ?
-                          String.fromCodePoint(charClass) :
-                          `${String.fromCodePoint(charClass[0])}-${
-                              String.fromCodePoint(charClass[1])}`)
-                  .slice(1, -1);
-            })
-            .join('')}]`;
+function charToGrammarChar(char: string) {
+  switch (char) {
+    case '\t':
+      return '\\t';
+    case '\r':
+      return '\\r';
+    case '\n':
+      return '\\n';
+    default: {
+      // Check if the character is a graphic Unicode character by looking at
+      // JSON.
+      const json = JSON.stringify(char).slice(1, -1);
+      if (json.startsWith('\\u')) {
+        const codepoint = char.codePointAt(0);
+        if (codepoint === undefined) {
+          throw new Error(`invalid codepoint: ${json}`);
+        }
+        return `\\u{${codepoint.toString(16)}}`;
+      }
+    }
   }
-}
-
-// A failed wildcard match.
-export class ErrAny implements MatchError {
-  public toGrammarString() {
-    return '.';
-  }
+  return char;
 }
 
 export class ParseError {
-  constructor(
-      public pos: number, public line: number, public col: number,
-      public nt: string[], public chars: MatchError[]) {}
+  public pos: number;
+  public line: number;
+  public col: number;
+
+  constructor(public input: string, public mismatches: NonTerminalMismatch) {
+    this.pos = mismatches.pos;
+    [this.line, this.col] = getLineCol(this.pos, this.input);
+  }
 
   public toString(): string {
-    const chars =
-        this.chars.map((err) => err.toGrammarString()).join(' | ') || '\'\'';
-    return `Parse error: Failed to match '${this.nt.join(',')}' at line=${
-        this.line}, col=${this.col}, pos=${this.pos}. Expected: ${chars}`;
-  }
-}
-class RawError {
-  constructor(
-      public pos: number, public nonterminals: ConsList<string>,
-      public failedChars: ConsList<MatchError>, public currentNT: string) {}
-
-  public toParseError(input: string): ParseError {
-    const [line, col] = getLineCol(this.pos, input);
-    const uniqueNonterminals: string[] = [];
-    const seenNonterminals = new Set<string>();
-    for (const nt of this.nonterminals) {
-      if (seenNonterminals.has(nt)) {
-        continue;
-      }
-      uniqueNonterminals.push(nt);
-      seenNonterminals.add(nt);
+    let result = `Syntax error on line ${this.line} column ${this.col}:
+  expected one of:\n${this.mismatches.toTreeString(1) || '<end of input>'}`;
+    if (this.pos >= this.input.length) {
+      result += '\n  got: <end of input>';
     }
-    return new ParseError(
-        this.pos, line, col, uniqueNonterminals,
-        this.failedChars.toArray().reverse());
+    return result;
   }
 }
 
-function updateError(err: RawError, pos: number, e: MatchError): RawError {
-  if (err !== null) {
-    if (pos > err.pos) {
-      return new RawError(
-          pos, cons(err.currentNT, empty()), cons(e, empty()), err.currentNT);
-    } else if (pos === err.pos) {
-      return new RawError(
-          err.pos, cons(err.currentNT, err.nonterminals),
-          cons(e, err.failedChars), err.currentNT);
+export class NonTerminalMismatch {
+  constructor(
+      public pos: number, public nonterminal: string,
+      public mismatches: ConsList<TerminalExpr|NonTerminalMismatch>) {}
+
+  public toTreeString(depth = 0, identToken = '  '): string {
+    const result: string[] = [];
+    const queue:
+        Array<[TerminalExpr | NonTerminalMismatch, /*identation*/ string]> =
+            [[this, identToken.repeat(depth)]];
+    while (queue.length !== 0) {
+      const [cur, ident] = queue.shift()!;
+      if (cur instanceof NonTerminalMismatch) {
+        result.push(ident, cur.nonterminal, '\n');
+        const deeperIdent = ident + identToken;
+        for (const m of cur.mismatches) {
+          queue.push([m, deeperIdent]);
+        }
+      } else {
+        result.push(ident, exprToGrammarString(cur), '\n');
+      }
+    }
+    return result.join('');
+  }
+}
+
+function terminalMismatch(
+    m: NonTerminalMismatch, pos: number, e: TerminalExpr): NonTerminalMismatch {
+  if (m !== null) {
+    if (pos > m.pos) {
+      return new NonTerminalMismatch(pos, m.nonterminal, cons(e, empty()));
+    } else if (pos === m.pos) {
+      return new NonTerminalMismatch(pos, m.nonterminal, cons(e, m.mismatches));
     } else {
-      return new RawError(
-          err.pos, err.nonterminals, err.failedChars, err.currentNT);
+      return m;
     }
   } else {
-    return new RawError(0, cons('', empty()), cons(e, empty()), '');
+    return new NonTerminalMismatch(0, '', cons(e, empty()));
   }
 }
 
@@ -210,9 +222,10 @@ interface ContAnd {
   type: ContType.AND;
   pos: number;
   asts: ASTList;
-  err: RawError;
+  err: NonTerminalMismatch;
 }
-function contAnd(pos: number, asts: ASTList, err: RawError): ContAnd {
+function contAnd(
+    pos: number, asts: ASTList, err: NonTerminalMismatch): ContAnd {
   return {type: ContType.AND, pos, asts, err};
 }
 
@@ -220,9 +233,10 @@ interface ContNot {
   type: ContType.NOT;
   pos: number;
   asts: ASTList;
-  err: RawError;
+  err: NonTerminalMismatch;
 }
-function contNot(pos: number, asts: ASTList, err: RawError): ContNot {
+function contNot(
+    pos: number, asts: ASTList, err: NonTerminalMismatch): ContNot {
   return {type: ContType.NOT, pos, asts, err};
 }
 
@@ -267,11 +281,9 @@ interface ContNT {
   mode: NonTerminalMode;
   name: string;
   asts: ASTList;
-  nt: string;
 }
-function contNT(
-    mode: NonTerminalMode, name: string, asts: ASTList, nt: string): ContNT {
-  return {type: ContType.NT, mode, name, asts, nt};
+function contNT(mode: NonTerminalMode, name: string, asts: ASTList): ContNT {
+  return {type: ContType.NT, mode, name, asts};
 }
 
 type MatchResult = Accepted|Rejected;
@@ -285,19 +297,20 @@ interface Accepted {
   type: MatchResultType.ACCEPT;
   pos: number;
   asts: ASTList;
-  err: RawError;
+  err: NonTerminalMismatch;
 }
 
-function accept(pos: number, asts: ASTList, err: RawError): Accepted {
+function accept(
+    pos: number, asts: ASTList, err: NonTerminalMismatch): Accepted {
   return {type: MatchResultType.ACCEPT, pos, asts, err};
 }
 
 interface Rejected {
   type: MatchResultType.REJECT;
-  err: RawError;
+  err: NonTerminalMismatch;
 }
 
-function reject(err: RawError): Rejected {
+function reject(err: NonTerminalMismatch): Rejected {
   return {type: MatchResultType.REJECT, err};
 }
 
@@ -311,12 +324,12 @@ interface ActionEval {
   exp: RuntimeExpr;
   pos: number;
   asts: ASTList;
-  err: RawError;
+  err: NonTerminalMismatch;
   continuations: ConsList<Continuation>;
 }
 
 function evalNext(
-    exp: RuntimeExpr, pos: number, asts: ASTList, err: RawError,
+    exp: RuntimeExpr, pos: number, asts: ASTList, err: NonTerminalMismatch,
     continuations: ConsList<Continuation>): ActionEval {
   return {type: ActionType.EVAL, asts, continuations, err, exp, pos};
 }
@@ -340,10 +353,8 @@ function match(
       env, input,
       evalNext(
           env[start].exp, /*pos=*/0, /*asts=*/empty(),
-          new RawError(
-              /*pos=*/0, /*nonterminals=*/cons(start, empty()),
-              /*failedChars=*/empty(),
-              /*currentNT=*/start),
+          new NonTerminalMismatch(
+              /*pos=*/0, /*nonterminal=*/start, /*mismatches=*/empty()),
           /*continuations=*/empty()));
   while (true) {
     switch (action.type) {
@@ -371,7 +382,7 @@ function moveEval(env: RuntimeParserConfig, input: string, action: ActionEval):
     case ExprType.ANY_CHAR:
       if (eof) {
         return applyNext(
-            continuations, reject(updateError(err, pos, new ErrAny())));
+            continuations, reject(terminalMismatch(err, pos, exp)));
       } else {
         // Advance one position if the input code-point is in BMP, two positions
         // otherwise.
@@ -409,18 +420,18 @@ function moveEval(env: RuntimeParserConfig, input: string, action: ActionEval):
           continuations,
           c.length === 1 ?
               eof || c !== input[pos] ?
-              reject(updateError(err, pos, new ErrChar(c))) :
+              reject(terminalMismatch(err, pos, exp)) :
               accept(pos + 1, cons(input[pos], asts), err) :
               // c.length === 2:
               pos + 1 >= input.length || c[0] !== input[pos] ||
                       c[1] !== input[pos + 1] ?
-              reject(updateError(err, pos, new ErrChar(c))) :
+              reject(terminalMismatch(err, pos, exp)) :
               accept(pos + 2, cons(input[pos] + input[pos + 1], asts), err));
     case ExprType.CHAR_CLASS:
       const cc = exp.codepoints;
       if (eof) {
         return applyNext(
-            continuations, reject(updateError(err, pos, new ErrCC(cc))));
+            continuations, reject(terminalMismatch(err, pos, exp)));
       }
       // JavaScript string comparison does not compare Unicode characters
       // correctly, so we must compare codepoints. Example:
@@ -444,8 +455,7 @@ function moveEval(env: RuntimeParserConfig, input: string, action: ActionEval):
                       pos + 2, cons(input[pos] + input[pos + 1], asts), err));
         }
       }
-      return applyNext(
-          continuations, reject(updateError(err, pos, new ErrCC(cc))));
+      return applyNext(continuations, reject(terminalMismatch(err, pos, exp)));
     case ExprType.SEQ: {
       // A sequence is made up of a list of expressions.
       // We traverse the list, making sure each expression succeeds.
@@ -473,8 +483,8 @@ function moveEval(env: RuntimeParserConfig, input: string, action: ActionEval):
       const nt = env[name];
       return evalNext(
           nt.exp, pos, /*asts=*/empty(),
-          new RawError(err.pos, err.nonterminals, err.failedChars, name),
-          cons(contNT(nt.mode, name, asts, err.currentNT), continuations));
+          new NonTerminalMismatch(err.pos, name, cons(err, empty())),
+          cons(contNT(nt.mode, name, asts), continuations));
     default:
       throw new Error(`Unsupported exp.type in exp=${
           (exp as any).type} action=${JSON.stringify(action)}`);
@@ -526,11 +536,10 @@ function moveApplyOnAccept(
     case ContType.NOT:
       return applyNext(rest, reject(evaluated.err));
     case ContType.NT:
-      const {mode, name, asts, nt} = evaluated;
+      const {mode, name, asts} = evaluated;
       const valAsts = accepted.asts;
-      const newErr = new RawError(
-          accepted.err.pos, accepted.err.nonterminals, accepted.err.failedChars,
-          nt);
+      const newErr = new NonTerminalMismatch(
+          accepted.err.pos, name, accepted.err.mismatches);
       switch (mode) {
         case NonTerminalMode.NORMAL:
           return applyNext(
@@ -596,8 +605,8 @@ function moveApplyOnReject(
       const err = rejected.err;
       return applyNext(
           continuations,
-          reject(new RawError(
-              err.pos, err.nonterminals, err.failedChars, evaluated.nt)));
+          reject(new NonTerminalMismatch(
+              err.pos, evaluated.name, err.mismatches)));
     default:
       // tslint:disable-next-line:no-unused-variable
       const checkExhaustive: never = evaluated;
@@ -632,16 +641,14 @@ function moveReturn(
           case NonTerminalMode.VOIDING:
             return EmptyAST();
         }
-      } else if (value.err && value.pos === value.err.pos) {
-        return new RawError(
-                   value.pos, value.err.nonterminals, value.err.failedChars, '')
-            .toParseError(input);
+      } else if (value.err && value.pos <= value.err.pos) {
+        return new ParseError(input, value.err);
       } else {
-        return new RawError(value.pos, empty(), empty(), '')
-            .toParseError(input);
+        return new ParseError(
+            input, new NonTerminalMismatch(value.pos, '', empty()));
       }
     case MatchResultType.REJECT:
-      return value.err.toParseError(input);
+      return new ParseError(input, value.err);
   }
 }
 
