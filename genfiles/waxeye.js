@@ -70,7 +70,7 @@ return /******/ (function(modules) { // webpackBootstrap
 /******/ 	__webpack_require__.p = "";
 /******/
 /******/ 	// Load entry module and return exports
-/******/ 	return __webpack_require__(__webpack_require__.s = 0);
+/******/ 	return __webpack_require__(__webpack_require__.s = 1);
 /******/ })
 /************************************************************************/
 /******/ ([
@@ -78,16 +78,97 @@ return /******/ (function(modules) { // webpackBootstrap
 /***/ (function(module, __webpack_exports__, __webpack_require__) {
 
 "use strict";
+/* harmony export (immutable) */ __webpack_exports__["a"] = cons;
+/* harmony export (immutable) */ __webpack_exports__["b"] = empty;
+// Creates a non-empty cons list.
+function cons(head, tail) {
+    return new Cons(head, tail);
+}
+// Returns the empty cons list.
+function empty() {
+    return Empty.instance;
+}
+// A non-empty cons list.
+class Cons {
+    // Internal, not public.
+    // TODO(glebm): Add the internal modifier once it's implemented in TypeScript
+    // https://github.com/Microsoft/TypeScript/issues/5228
+    constructor(head, tail) {
+        this.head = head;
+        this.tail = tail;
+    }
+    isEmpty() {
+        return false;
+    }
+    toArray() {
+        const result = [this.head];
+        let currentTail = this.tail;
+        while (!currentTail.isEmpty()) {
+            result.push(currentTail.head);
+            currentTail = currentTail.tail;
+        }
+        return result;
+    }
+    [Symbol.iterator]() {
+        let current = this;
+        return {
+            next() {
+                if (current.isEmpty()) {
+                    // This typecast is necessary because TypeScript incorrectly
+                    // specifies both `done` and `value` as required.
+                    return { done: true };
+                }
+                const value = current.head;
+                current = current.tail;
+                return { value };
+            },
+        };
+    }
+}
+/* unused harmony export Cons */
+
+// An empty cons list.
+class Empty {
+    constructor() { }
+    isEmpty() {
+        return true;
+    }
+    toArray() {
+        return [];
+    }
+    [Symbol.iterator]() {
+        return {
+            next() {
+                return { done: true };
+            },
+        };
+    }
+}
+/* unused harmony export Empty */
+
+Empty.instance = new Empty();
+
+
+/***/ }),
+/* 1 */
+/***/ (function(module, __webpack_exports__, __webpack_require__) {
+
+"use strict";
 Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
 /* harmony export (immutable) */ __webpack_exports__["EmptyAST"] = EmptyAST;
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_0__cons_list__ = __webpack_require__(0);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_1__expr__ = __webpack_require__(2);
 /*
  * Waxeye Parser Generator http://www.waxeye.org
  * Licensed under the MIT license. See 'LICENSE' for details.
  */
+
+
 class WaxeyeParser {
-    constructor(env, start /* keyof env */) {
-        this.env = env;
+    constructor(config, start /* keyof env */) {
+        this.config = config;
         this.start = start; /* keyof env */
+        this.env = parserConfigToRuntimeParserConfig(config);
     }
     parse(input, start = this.start) {
         if (!this.env[start]) {
@@ -98,6 +179,16 @@ class WaxeyeParser {
 }
 /* harmony export (immutable) */ __webpack_exports__["WaxeyeParser"] = WaxeyeParser;
 
+function parserConfigToRuntimeParserConfig(config) {
+    const result = {};
+    for (const [name, nonterminal] of Object.entries(config)) {
+        result[name] = {
+            mode: nonterminal.mode,
+            exp: Object(__WEBPACK_IMPORTED_MODULE_1__expr__["a" /* exprToRuntimeExpr */])(nonterminal.exp),
+        };
+    }
+    return result;
+}
 /*
  * An abstract syntax tree holds the non-terminal's name (`type`),
  * and a list of child ASTs.
@@ -191,23 +282,23 @@ class RawError {
             uniqueNonterminals.push(nt);
             seenNonterminals.add(nt);
         }
-        return new ParseError(this.pos, line, col, uniqueNonterminals, this.failedChars.reverse());
+        return new ParseError(this.pos, line, col, uniqueNonterminals, this.failedChars.toArray().reverse());
     }
 }
 function updateError(err, pos, e) {
     if (err !== null) {
         if (pos > err.pos) {
-            return new RawError(pos, [err.currentNT], [e], err.currentNT);
+            return new RawError(pos, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(err.currentNT, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["b" /* empty */])()), Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(e, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["b" /* empty */])()), err.currentNT);
         }
         else if (pos === err.pos) {
-            return new RawError(err.pos, [err.currentNT, ...err.nonterminals], [e, ...err.failedChars], err.currentNT);
+            return new RawError(err.pos, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(err.currentNT, err.nonterminals), Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(e, err.failedChars), err.currentNT);
         }
         else {
             return new RawError(err.pos, err.nonterminals, err.failedChars, err.currentNT);
         }
     }
     else {
-        return new RawError(0, [''], [e], '');
+        return new RawError(0, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])('', Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["b" /* empty */])()), Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(e, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["b" /* empty */])()), '');
     }
 }
 function contSeq(expressions) {
@@ -251,7 +342,11 @@ function applyNext(continuations, value) {
 }
 function match(env, start, input) {
     // move from initial state to halting state
-    let action = moveEval(env, input, evalNext(env[start].exp, 0, [], new RawError(0, [start], [], start), []));
+    let action = moveEval(env, input, evalNext(env[start].exp, /*pos=*/ 0, /*asts=*/ Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["b" /* empty */])(), new RawError(
+    /*pos=*/ 0, /*nonterminals=*/ Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(start, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["b" /* empty */])()), 
+    /*failedChars=*/ Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["b" /* empty */])(), 
+    /*currentNT=*/ start), 
+    /*continuations=*/ Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["b" /* empty */])()));
     while (true) {
         switch (action.type) {
             case 1 /* EVAL */:
@@ -259,11 +354,11 @@ function match(env, start, input) {
                 break;
             case 2 /* APPLY */:
                 const { continuations, value } = action;
-                if (continuations.length === 0) {
+                if (continuations.isEmpty()) {
                     return moveReturn(env, start, input, value);
                 }
-                const [evaluated, ...rest] = continuations;
-                action = moveApply(env, input, value, evaluated, rest);
+                action =
+                    moveApply(input, value, continuations.head, continuations.tail);
                 break;
         }
     }
@@ -273,7 +368,7 @@ function moveEval(env, input, action) {
     const { exp, pos, asts, err, continuations } = action;
     const eof = pos >= input.length;
     switch (exp.type) {
-        case 10 /* ANY */:
+        case 10 /* ANY_CHAR */:
             if (eof) {
                 return applyNext(continuations, reject(updateError(err, pos, new ErrAny())));
             }
@@ -281,36 +376,34 @@ function moveEval(env, input, action) {
                 // Advance one position if the input code-point is in BMP, two positions
                 // otherwise.
                 return applyNext(continuations, isSingleCharCodepoint(codePointAtOrFail(input, pos)) ?
-                    accept(pos + 1, [input[pos], ...asts], err) :
+                    accept(pos + 1, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(input[pos], asts), err) :
                     // A non single-char code-point implies !eof(pos + 1)
-                    accept(pos + 2, [input[pos] + input[pos + 1], ...asts], err));
+                    accept(pos + 2, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(input[pos] + input[pos + 1], asts), err));
             }
         case 2 /* ALT */: {
             const { exprs } = exp;
-            if (exprs.length > 0) {
-                return evalNext(exprs[0], pos, asts, err, [contAlt(exprs.slice(1), pos, asts), ...continuations]);
-            }
-            else {
+            if (exprs.isEmpty()) {
                 return applyNext(continuations, reject(err));
             }
+            return evalNext(exprs.head, pos, asts, err, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(contAlt(exprs.tail, pos, asts), continuations));
         }
         case 7 /* AND */:
-            return evalNext(exp.expr, pos, [], err, [contAnd(pos, asts, err), ...continuations]);
+            return evalNext(exp.expr, pos, /*asts=*/ Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["b" /* empty */])(), err, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(contAnd(pos, asts, err), continuations));
         case 8 /* NOT */:
-            return evalNext(exp.expr, pos, [], err, [contNot(pos, asts, err), ...continuations]);
+            return evalNext(exp.expr, pos, /*asts=*/ Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["b" /* empty */])(), err, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(contNot(pos, asts, err), continuations));
         case 9 /* VOID */:
-            return evalNext(exp.expr, pos, [], err, [contVoid(asts), ...continuations]);
+            return evalNext(exp.expr, pos, /*asts=*/ Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["b" /* empty */])(), err, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(contVoid(asts), continuations));
         case 11 /* CHAR */:
             const c = exp.char;
             return applyNext(continuations, c.length === 1 ?
                 eof || c !== input[pos] ?
                     reject(updateError(err, pos, new ErrChar(c))) :
-                    accept(pos + 1, [input[pos], ...asts], err) :
+                    accept(pos + 1, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(input[pos], asts), err) :
                 // c.length === 2:
                 pos + 1 >= input.length || c[0] !== input[pos] ||
                     c[1] !== input[pos + 1] ?
                     reject(updateError(err, pos, new ErrChar(c))) :
-                    accept(pos + 2, [input[pos] + input[pos + 1], ...asts], err));
+                    accept(pos + 2, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(input[pos] + input[pos + 1], asts), err));
         case 12 /* CHAR_CLASS */:
             const cc = exp.codepoints;
             if (eof) {
@@ -331,8 +424,8 @@ function moveEval(env, input, action) {
                     charClass[0] <= inputCodePoint && charClass[1] >= inputCodePoint;
                 if (isMatch) {
                     return applyNext(continuations, isSingleCharCodepoint(inputCodePoint) ?
-                        accept(pos + 1, [input[pos], ...asts], err) :
-                        accept(pos + 2, [input[pos] + input[pos + 1], ...asts], err));
+                        accept(pos + 1, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(input[pos], asts), err) :
+                        accept(pos + 2, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(input[pos] + input[pos + 1], asts), err));
                 }
             }
             return applyNext(continuations, reject(updateError(err, pos, new ErrCC(cc))));
@@ -342,56 +435,47 @@ function moveEval(env, input, action) {
             // The rest of the string returned by the expression is used
             // as input to the next expression.
             const { exprs } = exp;
-            if (exprs.length === 0) {
+            if (exprs.isEmpty()) {
                 return applyNext(continuations, accept(pos, asts, err));
             }
-            else {
-                return evalNext(exprs[0], pos, asts, err, [contSeq(exprs.slice(1)), ...continuations]);
-            }
+            return evalNext(exprs.head, pos, asts, err, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(contSeq(exprs.tail), continuations));
         }
         case 4 /* PLUS */:
-            return evalNext(exp.expr, pos, asts, err, [contPlus(exp.expr), ...continuations]);
+            return evalNext(exp.expr, pos, asts, err, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(contPlus(exp.expr), continuations));
         case 5 /* STAR */:
-            return evalNext(exp.expr, pos, asts, err, [contStar(exp.expr, pos, asts), ...continuations]);
+            return evalNext(exp.expr, pos, asts, err, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(contStar(exp.expr, pos, asts), continuations));
         case 6 /* OPT */:
-            return evalNext(exp.expr, pos, asts, err, [contOpt(pos, asts), ...continuations]);
+            return evalNext(exp.expr, pos, asts, err, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(contOpt(pos, asts), continuations));
         case 1 /* NT */:
             const { name } = exp;
             const nt = env[name];
-            return evalNext(nt.exp, pos, [], new RawError(err.pos, err.nonterminals, err.failedChars, name), [
-                contNT(nt.mode, name, asts, err.currentNT),
-                ...continuations,
-            ]);
+            return evalNext(nt.exp, pos, /*asts=*/ Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["b" /* empty */])(), new RawError(err.pos, err.nonterminals, err.failedChars, name), Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(contNT(nt.mode, name, asts, err.currentNT), continuations));
         default:
             throw new Error(`Unsupported exp.type in exp=${exp.type} action=${JSON.stringify(action)}`);
     }
 }
 // Handles the result of a processed continuation.
-function moveApply(env, input, value, evaluated, rest) {
+function moveApply(input, value, evaluated, rest) {
     switch (value.type) {
         case 1 /* ACCEPT */:
-            return moveApplyOnAccept(env, input, value, evaluated, rest);
+            return moveApplyOnAccept(input, value, evaluated, rest);
         case 2 /* REJECT */:
-            return moveApplyOnReject(env, input, value, evaluated, rest);
+            return moveApplyOnReject(input, value, evaluated, rest);
     }
 }
 // Called after the `evaluated` continuation got accepted (matched).
-function moveApplyOnAccept(env, input, accepted, evaluated, rest) {
+function moveApplyOnAccept(input, accepted, evaluated, rest) {
     switch (evaluated.type) {
-        case 1 /* SEQ */:
-            const es = evaluated.expressions;
-            if (es.length > 0) {
-                return evalNext(es[0], accepted.pos, accepted.asts, accepted.err, [contSeq(es.slice(1)), ...rest]);
-            }
-            else {
+        case 1 /* SEQ */: {
+            const { expressions } = evaluated;
+            if (expressions.isEmpty()) {
                 return applyNext(rest, accepted);
             }
+            return evalNext(expressions.head, accepted.pos, accepted.asts, accepted.err, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(contSeq(expressions.tail), rest));
+        }
         case 6 /* STAR */:
         case 7 /* PLUS */:
-            return evalNext(evaluated.expression, accepted.pos, accepted.asts, accepted.err, [
-                contStar(evaluated.expression, accepted.pos, accepted.asts),
-                ...rest,
-            ]);
+            return evalNext(evaluated.expression, accepted.pos, accepted.asts, accepted.err, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(contStar(evaluated.expression, accepted.pos, accepted.asts), rest));
         case 2 /* ALT */:
         case 5 /* OPT */:
             return applyNext(rest, accepted);
@@ -407,15 +491,16 @@ function moveApplyOnAccept(env, input, accepted, evaluated, rest) {
             const newErr = new RawError(accepted.err.pos, accepted.err.nonterminals, accepted.err.failedChars, nt);
             switch (mode) {
                 case 1 /* NORMAL */:
-                    return applyNext(rest, accept(accepted.pos, [new AST(name, valAsts.reverse()), ...asts], newErr));
+                    return applyNext(rest, accept(accepted.pos, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(new AST(name, valAsts.toArray().reverse()), asts), newErr));
                 case 2 /* PRUNING */:
-                    switch (valAsts.length) {
-                        case 0:
-                            return applyNext(rest, accept(accepted.pos, asts, newErr));
-                        case 1:
-                            return applyNext(rest, accept(accepted.pos, [valAsts[0], ...asts], newErr));
-                        default:
-                            return applyNext(rest, accept(accepted.pos, [new AST(name, valAsts.reverse()), ...asts], newErr));
+                    if (valAsts.isEmpty()) {
+                        return applyNext(rest, accept(accepted.pos, asts, newErr));
+                    }
+                    else if (valAsts.tail.isEmpty()) {
+                        return applyNext(rest, accept(accepted.pos, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(valAsts.head, asts), newErr));
+                    }
+                    else {
+                        return applyNext(rest, accept(accepted.pos, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(new AST(name, valAsts.toArray().reverse()), asts), newErr));
                     }
                 case 3 /* VOIDING */:
                     return applyNext(rest, accept(accepted.pos, asts, newErr));
@@ -429,19 +514,15 @@ function moveApplyOnAccept(env, input, accepted, evaluated, rest) {
     }
 }
 // Called after the `evaluated` continuation got rejected (did not match).
-function moveApplyOnReject(env, input, rejected, evaluated, continuations) {
+function moveApplyOnReject(input, rejected, evaluated, continuations) {
     switch (evaluated.type) {
-        case 2 /* ALT */:
-            const es = evaluated.expressions;
-            if (es.length > 0) {
-                return evalNext(es[0], evaluated.pos, evaluated.asts, rejected.err, [
-                    contAlt(es.slice(1), evaluated.pos, evaluated.asts),
-                    ...continuations,
-                ]);
-            }
-            else {
+        case 2 /* ALT */: {
+            const { expressions } = evaluated;
+            if (expressions.isEmpty()) {
                 return applyNext(continuations, rejected);
             }
+            return evalNext(expressions.head, evaluated.pos, evaluated.asts, rejected.err, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(contAlt(expressions.tail, evaluated.pos, evaluated.asts), continuations));
+        }
         case 1 /* SEQ */:
         case 8 /* VOID */:
         case 7 /* PLUS */:
@@ -469,19 +550,20 @@ function moveReturn(env, start, input, value) {
             if (value.pos >= input.length) {
                 switch (env[start].mode) {
                     case 1 /* NORMAL */:
-                        return new AST(start, asts.reverse());
+                        return new AST(start, asts.toArray().reverse());
                     case 2 /* PRUNING */:
-                        switch (asts.length) {
-                            case 0:
-                                return EmptyAST();
-                            case 1:
-                                const ast = asts[0];
-                                if (typeof ast === 'string') {
-                                    throw new Error(`Expected an AST, got a string ${JSON.stringify(ast)}, in ${value}`);
-                                }
-                                return ast;
-                            default:
-                                return new AST(start, asts.reverse());
+                        if (asts.isEmpty()) {
+                            return EmptyAST();
+                        }
+                        else if (asts.tail.isEmpty()) {
+                            const ast = asts.head;
+                            if (typeof ast === 'string') {
+                                throw new Error(`Expected an AST, got a string ${JSON.stringify(ast)}, in ${value}`);
+                            }
+                            return ast;
+                        }
+                        else {
+                            return new AST(start, asts.toArray().reverse());
                         }
                     case 3 /* VOIDING */:
                         return EmptyAST();
@@ -492,7 +574,8 @@ function moveReturn(env, start, input, value) {
                     .toParseError(input);
             }
             else {
-                return new RawError(value.pos, [], [], '').toParseError(input);
+                return new RawError(value.pos, Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["b" /* empty */])(), Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["b" /* empty */])(), '')
+                    .toParseError(input);
             }
         case 2 /* REJECT */:
             return value.err.toParseError(input);
@@ -521,6 +604,42 @@ function codePointAtOrFail(input, pos) {
         throw new Error(`Undefined input codepoint at ${pos} in ${JSON.stringify(input)}`);
     }
     return codePoint;
+}
+
+
+/***/ }),
+/* 2 */
+/***/ (function(module, __webpack_exports__, __webpack_require__) {
+
+"use strict";
+/* harmony export (immutable) */ __webpack_exports__["a"] = exprToRuntimeExpr;
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_0__cons_list__ = __webpack_require__(0);
+// We have two representations for expression:
+// the config one, and the internal one.
+// The config representation is JSON-compatible.
+// The internal one is optimized for performance.
+
+function exprToRuntimeExpr(expr) {
+    switch (expr.type) {
+        case 1 /* NT */:
+        case 11 /* CHAR */:
+        case 12 /* CHAR_CLASS */:
+        case 10 /* ANY_CHAR */:
+            return expr;
+        case 4 /* PLUS */:
+        case 5 /* STAR */:
+        case 6 /* OPT */:
+        case 7 /* AND */:
+        case 8 /* NOT */:
+        case 9 /* VOID */:
+            return { type: expr.type, expr: exprToRuntimeExpr(expr.expr) };
+        case 2 /* ALT */:
+        case 3 /* SEQ */:
+            return {
+                type: expr.type,
+                exprs: expr.exprs.reduceRight((result, value) => Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["a" /* cons */])(exprToRuntimeExpr(value), result), Object(__WEBPACK_IMPORTED_MODULE_0__cons_list__["b" /* empty */])()),
+            };
+    }
 }
 
 
