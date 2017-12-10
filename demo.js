@@ -98,8 +98,10 @@
     ui.cannedSelect.addEventListener('change', updateCannedExample);
     ui.grammarSource.addEventListener('input', throttle(compile, 360));
     ui.parserInput.addEventListener('input', parse);
-    ui.grammarSource.addEventListener('input', throttle(updateURL, 360));
-    ui.parserInput.addEventListener('input', throttle(updateURL, 360));
+    for (const input of [ui.grammarSource, ui.parserInput]) {
+      input.addEventListener('input', throttle(updateURL, 360));
+      input.addEventListener('input', () => { ui.cannedSelect.value = '' });
+    }
     ui.parseErrorOverlay = new Textoverlay(ui.parserInput, []);
 
     // Initialize from the URL hash fragment. Cases:
